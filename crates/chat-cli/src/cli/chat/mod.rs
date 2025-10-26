@@ -420,6 +420,10 @@ impl ChatArgs {
             .await?;
         let tool_config = tool_manager.load_tools(os, &mut stderr).await?;
 
+        let should_send_structured_msg = should_send_structured_message(os);
+        let (_, _, control_end_stderr, control_end_stdout) =
+            get_legacy_conduits(should_send_structured_msg);
+
         ChatSession::new(
             os,
             &conversation_id,
@@ -434,6 +438,8 @@ impl ChatArgs {
             !self.no_interactive,
             mcp_enabled,
             self.wrap,
+            control_end_stderr,
+            control_end_stdout,
         )
         .await?
         .spawn(os)
@@ -614,13 +620,11 @@ impl ChatSession {
         interactive: bool,
         mcp_enabled: bool,
         wrap: Option<WrapMode>,
+        mut control_end_stderr: ControlEnd<DestinationStderr>,
+        control_end_stdout: ControlEnd<DestinationStdout>,
     ) -> Result<Self> {
         // Only load prior conversation if we need to resume
         let mut existing_conversation = false;
-
-        let should_send_structured_msg = should_send_structured_message(os);
-        let (_, _, mut control_end_stderr, control_end_stdout) =
-            get_legacy_conduits(should_send_structured_msg);
 
         let conversation = match resume_conversation {
             true => {
