@@ -66,8 +66,6 @@ pub enum GetPromptError {
     MissingPromptInfo,
     #[error(transparent)]
     General(#[from] eyre::Report),
-    #[error("Incorrect response type received")]
-    IncorrectResponseType,
     #[error("Missing channel")]
     MissingChannel,
     #[error(transparent)]

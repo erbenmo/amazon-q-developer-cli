@@ -139,15 +139,6 @@ async fn upgrade_to_pro(os: &mut Os, session: &mut ChatSession) -> Result<(), Ch
         cursor::Show
     )?;
 
-    let prompt = format!(
-        "{}{}{}{}{}",
-        "Would you like to open the AWS console to upgrade? [".dark_grey(),
-        "y".green(),
-        "/".dark_grey(),
-        "n".green(),
-        "]: ".dark_grey(),
-    );
-
     // ACP Agent: No interactive input, always decline subscription
     let user_input = Some("n".to_string());
     queue!(session.stderr, StyledText::reset(), style::Print("\n"),)?;

@@ -477,13 +477,11 @@ pub struct PromptBundle {
 #[derive(Clone, Debug)]
 pub enum PromptQuery {
     List,
-    Search(Option<String>),
 }
 
 #[derive(Clone, Debug)]
 pub enum PromptQueryResult {
     List(HashMap<String, Vec<PromptBundle>>),
-    Search(Vec<String>),
 }
 
 /// Categorizes different types of tool name validation failures:
@@ -1007,7 +1005,6 @@ impl ToolManager {
 
             Ok(match query_result {
                 PromptQueryResult::List(list) => list,
-                PromptQueryResult::Search(_) => return Err(GetPromptError::IncorrectResponseType),
             })
         } else {
             Err(GetPromptError::MissingChannel)
@@ -1063,9 +1060,7 @@ impl ToolManager {
                 .recv()
                 .await
                 .map_err(|e| GetPromptError::General(eyre::eyre!(e)))?;
-            let PromptQueryResult::List(prompts) = prompts else {
-                return Err(GetPromptError::IncorrectResponseType);
-            };
+            let PromptQueryResult::List(prompts) = prompts;
 
             match (prompts.get(&prompt_name), server_name.as_ref()) {
                 // If we have more than one eligible clients but no server name specified
@@ -1336,34 +1331,7 @@ fn spawn_orchestrator_task(
                     if let Err(e) = prompt_query_response_sender.send(query_res) {
                         error!("Error sending prompts to chat helper: {:?}", e);
                     }
-                },
-                PromptQuery::Search(search_word) => {
-                    let filtered_prompts = prompts
-                        .iter()
-                        .flat_map(|(prompt_name, bundles)| {
-                            if bundles.len() > 1 {
-                                bundles
-                                    .iter()
-                                    .map(|b| format!("{}/{}", b.server_name, prompt_name))
-                                    .collect()
-                            } else {
-                                vec![prompt_name.to_owned()]
-                            }
-                        })
-                        .filter(|n| {
-                            if let Some(p) = &search_word {
-                                n.contains(p)
-                            } else {
-                                true
-                            }
-                        })
-                        .collect::<Vec<_>>();
-
-                    let query_res = PromptQueryResult::Search(filtered_prompts);
-                    if let Err(e) = prompt_query_response_sender.send(query_res) {
-                        error!("Error sending prompts to chat helper: {:?}", e);
-                    }
-                },
+                }
             }
         }
 

@@ -1,8 +1,5 @@
 use clap::Args;
-use crossterm::style::{
-    self,
-    Stylize,
-};
+use crossterm::style;
 use crossterm::{
     cursor,
     execute,
