@@ -4,7 +4,6 @@ pub mod cli;
 mod consts;
 pub mod context;
 mod conversation;
-mod custom_spinner;
 mod message;
 mod parse;
 use std::path::MAIN_SEPARATOR;
@@ -79,7 +78,7 @@ use crossterm::{
     style,
     terminal,
 };
-use custom_spinner::Spinners;
+
 use eyre::{
     Report,
     Result,
@@ -572,7 +571,6 @@ pub struct ChatSession {
     pub input_receiver: tokio::sync::mpsc::Receiver<String>,
     /// Width of the terminal, required for [ParseState].
     terminal_width_provider: fn() -> Option<usize>,
-    spinner: Option<Spinners>,
     /// [ConversationState].
     conversation: ConversationState,
     /// Tool uses requested by the model that are actively being handled.
@@ -718,7 +716,6 @@ impl ChatSession {
             existing_conversation,
             input_receiver,
             terminal_width_provider,
-            spinner: None,
             conversation,
             tool_uses: vec![],
             user_turn_request_metadata: vec![],
@@ -822,10 +819,6 @@ impl ChatSession {
         let (reason, reason_desc) = get_error_reason(&err);
         self.send_error_telemetry(os, reason, Some(reason_desc), err.status_code())
             .await;
-
-        if self.spinner.is_some() {
-            drop(self.spinner.take());
-        }
 
         let (context, report, display_err_message) = match err {
             ChatError::Auth(AuthError::NoToken) => {
@@ -1430,9 +1423,7 @@ impl ChatSession {
             .create_summary_request(os, custom_prompt.as_ref(), strategy)
             .await?;
 
-        if self.interactive {
-            self.spinner = Some(Spinners::new("Creating summary...".to_string()));
-        }
+
 
         let mut response = match self
             .send_message(
@@ -1445,9 +1436,6 @@ impl ChatSession {
         {
             Ok(res) => res,
             Err(err) => {
-                if self.interactive {
-                    self.spinner.take();
-                }
 
                 // If the request fails due to context window overflow, then we'll see if it's
                 // retryable according to the passed strategy.
@@ -1541,10 +1529,6 @@ impl ChatSession {
                 }
             }
         };
-
-        if self.spinner.is_some() {
-            drop(self.spinner.take());
-        }
 
         self.conversation
             .replace_history_with_summary(summary.clone(), strategy, request_metadata);
@@ -1714,10 +1698,6 @@ impl ChatSession {
 
         if self.interactive {
             execute!(self.stderr, cursor::Hide, style::Print("\n"))?;
-            self.spinner = Some(Spinners::new(format!(
-                "Generating agent config for '{}'...",
-                agent_name
-            )));
         }
 
         let mut response = match self
@@ -1731,9 +1711,6 @@ impl ChatSession {
         {
             Ok(res) => res,
             Err(err) => {
-                if self.interactive {
-                    self.spinner.take();
-                }
                 return Err(err);
             },
         };
@@ -1777,9 +1754,6 @@ impl ChatSession {
             }
         };
 
-        if self.spinner.is_some() {
-            drop(self.spinner.take());
-        }
         // Parse and validate the initial generated config
         let initial_agent_config = match serde_json::from_str::<Agent>(&agent_config_json) {
             Ok(config) => config,
@@ -2130,10 +2104,6 @@ impl ChatSession {
             queue!(self.stderr, StyledText::reset())?;
             queue!(self.stderr, cursor::Hide)?;
 
-            if self.interactive {
-                self.spinner = Some(Spinners::new("Thinking...".to_owned()));
-            }
-
             Ok(ChatState::HandleResponseStream(conv_state))
         }
     }
@@ -2280,10 +2250,6 @@ impl ChatSession {
                     &self.conversation.agents,
                 )
                 .await;
-
-            if let Some(spinner) = self.spinner.take() {
-                drop(spinner);
-            }
 
             // Handle checkpoint after tool execution - store tag for later display
             let checkpoint_tag: Option<String> = {
@@ -2557,9 +2523,6 @@ impl ChatSession {
 
         execute!(self.stderr, cursor::Hide)?;
         execute!(self.stderr, style::Print("\n"), StyledText::reset_attributes())?;
-        if self.interactive {
-            self.spinner = Some(Spinners::new("Thinking...".to_string()));
-        }
 
         self.send_chat_telemetry(os, TelemetryResult::Succeeded, None, None, None, false)
             .await;
@@ -2612,10 +2575,6 @@ impl ChatSession {
         let mut tool_uses = Vec::new();
         let mut tool_name_being_recvd: Option<String> = None;
 
-        if self.spinner.is_some() {
-            drop(self.spinner.take());
-        }
-
         loop {
             match rx.recv().await {
                 Some(Ok(msg_event)) => {
@@ -2654,9 +2613,6 @@ impl ChatSession {
                             buf.push_str(&text);
                         },
                         parser::ResponseEvent::ToolUse(tool_use) => {
-                            if self.spinner.is_some() {
-                                drop(self.spinner.take());
-                            }
                             tool_uses.push(tool_use);
                             tool_name_being_recvd = None;
                         },
@@ -2705,7 +2661,6 @@ impl ChatSession {
                             );
 
                             execute!(self.stderr, cursor::Hide)?;
-                            self.spinner = Some(Spinners::new("Dividing up the work...".to_string()));
 
                             // For stream timeouts, we'll tell the model to try and split its response into
                             // smaller chunks.
@@ -2842,10 +2797,6 @@ impl ChatSession {
                 buf.push('\n');
             }
 
-            if tool_name_being_recvd.is_none() && !buf.is_empty() && self.spinner.is_some() {
-                drop(self.spinner.take());
-            }
-
             info!("## control end: buf: {:?}", buf);
 
             let mut temp_buf = Vec::<u8>::new();
@@ -2893,12 +2844,8 @@ impl ChatSession {
                 tokio::time::sleep(Duration::from_millis(8)).await;
             }
 
-            // Set spinner after showing all of the assistant text content so far.
             if tool_name_being_recvd.is_some() {
                 queue!(self.stderr, cursor::Hide)?;
-                if self.interactive {
-                    self.spinner = Some(Spinners::new("Thinking...".to_string()));
-                }
             }
 
             if ended {
@@ -3217,10 +3164,6 @@ impl ChatSession {
                 });
             },
             Err(err) => return Err(err),
-        }
-
-        if self.interactive {
-            self.spinner = Some(Spinners::new("Thinking...".to_owned()));
         }
 
         Ok(ChatState::HandleResponseStream(
@@ -3595,40 +3538,6 @@ async fn get_subscription_status(os: &mut Os) -> Result<ActualSubscriptionStatus
         },
         Err(e) => Err(e.into()),
     }
-}
-
-async fn get_subscription_status_with_spinner(
-    os: &mut Os,
-    output: &mut (impl Write + Clone + Send + Sync + 'static),
-) -> Result<ActualSubscriptionStatus> {
-    return with_spinner(output, "Checking subscription status...", || async {
-        get_subscription_status(os).await
-    })
-    .await;
-}
-
-pub async fn with_spinner<T, E, F, Fut, S: std::io::Write + Clone + Send + Sync + 'static>(
-    output: &mut S,
-    spinner_text: &str,
-    f: F,
-) -> Result<T, E>
-where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<T, E>>,
-{
-    queue!(output, cursor::Hide,).ok();
-    let spinner = Spinners::new(spinner_text.to_owned());
-
-    let result = f().await;
-
-    drop(spinner);
-    let _ = queue!(
-        output,
-        terminal::Clear(terminal::ClearType::CurrentLine),
-        cursor::MoveToColumn(0),
-    );
-
-    result
 }
 
 /// Checks if an input may be referencing a file and should not be handled as a typical slash

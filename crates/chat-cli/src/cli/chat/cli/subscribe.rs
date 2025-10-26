@@ -13,8 +13,7 @@ use crate::cli::chat::{
     ChatError,
     ChatSession,
     ChatState,
-    get_subscription_status_with_spinner,
-    with_spinner,
+    get_subscription_status,
 };
 use crate::os::Os;
 use crate::theme::StyledText;
@@ -49,7 +48,7 @@ impl SubscribeArgs {
             )?;
         } else if self.manage {
             queue!(session.stderr, style::Print("\n"),)?;
-            match get_subscription_status_with_spinner(os, &mut session.stderr).await {
+            match get_subscription_status(os).await {
                 Ok(status) => {
                     if status != ActualSubscriptionStatus::Active {
                         queue!(
@@ -106,7 +105,7 @@ async fn upgrade_to_pro(os: &mut Os, session: &mut ChatSession) -> Result<(), Ch
     queue!(session.stderr, style::Print("\n"),)?;
 
     // Get current subscription status
-    match get_subscription_status_with_spinner(os, &mut session.stderr).await {
+    match get_subscription_status(os).await {
         Ok(status) => {
             if status == ActualSubscriptionStatus::Active {
                 queue!(
@@ -156,12 +155,9 @@ async fn upgrade_to_pro(os: &mut Os, session: &mut ChatSession) -> Result<(), Ch
     // Create a subscription token and open the webpage
     let r = os.client.create_subscription_token().await?;
 
-    let url = with_spinner(&mut session.stderr, "Preparing to upgrade...", || async move {
-        r.encoded_verification_url()
-            .map(|s| s.to_string())
-            .ok_or(ChatError::Custom("Missing verification URL".into()))
-    })
-    .await?;
+    let url = r.encoded_verification_url()
+    .map(|s| s.to_string())
+    .ok_or(ChatError::Custom("Missing verification URL".into()))?;
 
     if is_remote() || crate::util::open::open_url_async(&url).await.is_err() {
         queue!(
