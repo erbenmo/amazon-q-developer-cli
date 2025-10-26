@@ -236,8 +236,8 @@ pub struct ChatArgs {
 }
 
 impl ChatArgs {
-    pub async fn execute(mut self, os: &mut Os, input_receiver: tokio::sync::mpsc::Receiver<String>) -> Result<ExitCode> {
-        let mut input = self.input;
+    pub async fn create_chat_session(mut self, os: &mut Os, input_receiver: tokio::sync::mpsc::Receiver<String>) -> Result<ChatSession> {
+        let mut input: Option<String> = self.input;
 
         if self.no_interactive && input.is_none() {
             if !std::io::stdin().is_terminal() {
@@ -424,7 +424,7 @@ impl ChatArgs {
         let (_, _, control_end_stderr, control_end_stdout) =
             get_legacy_conduits(should_send_structured_msg);
 
-        ChatSession::new(
+        return ChatSession::new(
             os,
             &conversation_id,
             agents,
@@ -440,12 +440,13 @@ impl ChatArgs {
             self.wrap,
             control_end_stderr,
             control_end_stdout,
-        )
-        .await?
-        .spawn(os)
-        .await
-        .map(|_| ExitCode::SUCCESS)
+        ).await;
     }
+
+    pub async fn execute(self, os: &mut Os, input_receiver: tokio::sync::mpsc::Receiver<String>) -> Result<ExitCode> {
+        self.create_chat_session(os, input_receiver).await?.spawn(os).await.map(|_| ExitCode::SUCCESS)
+    }
+
 }
 
 // Maximum number of times to show the changelog announcement per version
