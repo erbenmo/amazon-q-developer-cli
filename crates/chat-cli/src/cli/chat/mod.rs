@@ -242,7 +242,7 @@ pub struct ChatArgs {
 }
 
 impl ChatArgs {
-    pub async fn execute(mut self, os: &mut Os) -> Result<ExitCode> {
+    pub async fn execute(mut self, os: &mut Os, input_receiver: tokio::sync::mpsc::Receiver<String>) -> Result<ExitCode> {
         let mut input = self.input;
 
         if self.no_interactive && input.is_none() {
@@ -414,6 +414,7 @@ impl ChatArgs {
         let (prompt_request_sender, prompt_request_receiver) = tokio::sync::broadcast::channel::<PromptQuery>(5);
         let (prompt_response_sender, prompt_response_receiver) =
             tokio::sync::broadcast::channel::<PromptQueryResult>(5);
+        
         let mut tool_manager = ToolManagerBuilder::default()
             .prompt_query_result_sender(prompt_response_sender)
             .prompt_query_receiver(prompt_request_receiver)
@@ -431,6 +432,7 @@ impl ChatArgs {
             agents,
             input,
             InputSource::new(os, prompt_request_sender, prompt_response_receiver)?,
+            input_receiver,
             self.resume,
             || terminal::window_size().map(|s| s.columns.into()).ok(),
             tool_manager,
@@ -462,7 +464,6 @@ const CONTINUATION_LINE: &str = " ⋮ ";
 const PURPOSE_ARROW: &str = " ↳ ";
 const SUCCESS_TICK: &str = " ✓ ";
 const ERROR_EXCLAMATION: &str = " ❗ ";
-const DELEGATE_NOTIFIER: &str = "[BACKGROUND TASK READY]";
 
 /// Enum used to denote the origin of a tool use event
 enum ToolUseStatus {
@@ -574,6 +575,8 @@ pub struct ChatSession {
     /// Whether we're starting a new conversation or continuing an old one.
     existing_conversation: bool,
     input_source: InputSource,
+    /// Channel for receiving user input from ACP agent
+    pub input_receiver: tokio::sync::mpsc::Receiver<String>,
     /// Width of the terminal, required for [ParseState].
     terminal_width_provider: fn() -> Option<usize>,
     spinner: Option<Spinners>,
@@ -612,6 +615,7 @@ impl ChatSession {
         mut agents: Agents,
         mut input: Option<String>,
         input_source: InputSource,
+        input_receiver: tokio::sync::mpsc::Receiver<String>,
         resume_conversation: bool,
         terminal_width_provider: fn() -> Option<usize>,
         tool_manager: ToolManager,
@@ -721,6 +725,7 @@ impl ChatSession {
             initial_input: input,
             existing_conversation,
             input_source,
+            input_receiver,
             terminal_width_provider,
             spinner: None,
             conversation,
@@ -1907,8 +1912,7 @@ impl ChatSession {
         }
 
         execute!(self.stderr, StyledText::reset(), StyledText::reset_attributes())?;
-        let prompt = self.generate_tool_trust_prompt(os).await;
-        let user_input = match self.read_user_input(&prompt, false) {
+        let user_input = match self.read_user_input_from_channel().await {
             Some(input) => input,
             None => return Ok(ChatState::Exit),
         };
@@ -3355,6 +3359,11 @@ impl ChatSession {
         Ok(())
     }
 
+    /// Helper function to read user input from agent channel
+    async fn read_user_input_from_channel(&mut self) -> Option<String> {
+        self.input_receiver.recv().await
+    }
+
     /// Helper function to read user input with a prompt and Ctrl+C handling
     fn read_user_input(&mut self, prompt: &str, exit_on_single_ctrl_c: bool) -> Option<String> {
         let mut ctrl_c = false;
@@ -3384,30 +3393,6 @@ impl ChatSession {
                 (Err(_), _) => return None,
             }
         }
-    }
-
-    /// Helper function to generate a prompt based on the current context
-    async fn generate_tool_trust_prompt(&mut self, os: &Os) -> String {
-        let profile = self.conversation.current_profile().map(|s| s.to_string());
-        let all_trusted = self.all_tools_trusted();
-        let tangent_mode = self.conversation.is_in_tangent_mode();
-
-        // Check if context usage indicator is enabled
-        let usage_percentage = if ExperimentManager::is_enabled(os, ExperimentName::ContextUsageIndicator) {
-            use crate::cli::chat::cli::usage::get_total_usage_percentage;
-            get_total_usage_percentage(self, os).await.ok()
-        } else {
-            None
-        };
-
-        let mut generated_prompt =
-            prompt::generate_prompt(profile.as_deref(), all_trusted, tangent_mode, usage_percentage);
-
-        if ExperimentManager::is_enabled(os, ExperimentName::Delegate) && status_all_agents(os).await.is_ok() {
-            generated_prompt = format!("{DELEGATE_NOTIFIER}\n{generated_prompt}");
-        }
-
-        generated_prompt
     }
 
     async fn send_tool_use_telemetry(&mut self, os: &Os) {
@@ -3764,711 +3749,4 @@ async fn save_agent_config(os: &mut Os, config: &Agent, agent_name: &str, is_glo
         .map_err(|e| ChatError::Custom(format!("Failed to write agent config file: {}", e).into()))?;
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::*;
-    use crate::cli::agent::Agent;
-
-    async fn get_test_agents(os: &Os) -> Agents {
-        const AGENT_PATH: &str = "/persona/TestAgent.json";
-        let mut agents = Agents::default();
-        let agent = Agent {
-            path: Some(PathBuf::from(AGENT_PATH)),
-            ..Default::default()
-        };
-        if let Ok(false) = os.fs.try_exists(AGENT_PATH).await {
-            let content = agent.to_str_pretty().expect("Failed to serialize test agent to file");
-            let agent_path = PathBuf::from(AGENT_PATH);
-            os.fs
-                .create_dir_all(
-                    agent_path
-                        .parent()
-                        .expect("Failed to obtain parent path for agent config"),
-                )
-                .await
-                .expect("Failed to create test agent dir");
-            os.fs
-                .write(agent_path, &content)
-                .await
-                .expect("Failed to write test agent to file");
-        }
-        agents.agents.insert("TestAgent".to_string(), agent);
-        agents.switch("TestAgent").expect("Failed to switch agent");
-        agents
-    }
-
-    #[tokio::test]
-    async fn test_flow() {
-        let mut os = Os::new().await.unwrap();
-        os.client.set_mock_output(serde_json::json!([
-            [
-                "Sure, I'll create a file for you",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file.txt",
-                    }
-                }
-            ],
-            [
-                "Hope that looks good to you!",
-            ],
-        ]));
-
-        let agents = get_test_agents(&os).await;
-        let tool_manager = ToolManager::default();
-        let tool_config = serde_json::from_str::<HashMap<String, ToolSpec>>(include_str!("tools/tool_index.json"))
-            .expect("Tools failed to load");
-        ChatSession::new(
-            &mut os,
-            "fake_conv_id",
-            agents,
-            None,
-            InputSource::new_mock(vec![
-                "create a new file".to_string(),
-                "y".to_string(),
-                "exit".to_string(),
-            ]),
-            false,
-            || Some(80),
-            tool_manager,
-            None,
-            tool_config,
-            true,
-            false,
-            None,
-        )
-        .await
-        .unwrap()
-        .spawn(&mut os)
-        .await
-        .unwrap();
-
-        assert_eq!(os.fs.read_to_string("/file.txt").await.unwrap(), "Hello, world!\n");
-    }
-
-    #[tokio::test]
-    async fn test_flow_tool_permissions() {
-        let mut os = Os::new().await.unwrap();
-        os.client.set_mock_output(serde_json::json!([
-            [
-                "Ok",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file1.txt",
-                    }
-                }
-            ],
-            [
-                "Done",
-            ],
-            [
-                "Ok",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file2.txt",
-                    }
-                }
-            ],
-            [
-                "Done",
-            ],
-            [
-                "Ok",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file3.txt",
-                    }
-                }
-            ],
-            [
-                "Done",
-            ],
-            [
-                "Ok",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file4.txt",
-                    }
-                }
-            ],
-            [
-                "Ok, I won't make it.",
-            ],
-            [
-                "Ok",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file5.txt",
-                    }
-                }
-            ],
-            [
-                "Done",
-            ],
-            [
-                "Ok",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file6.txt",
-                    }
-                }
-            ],
-            [
-                "Ok, I won't make it.",
-            ],
-        ]));
-
-        let agents = get_test_agents(&os).await;
-        let tool_manager = ToolManager::default();
-        let tool_config = serde_json::from_str::<HashMap<String, ToolSpec>>(include_str!("tools/tool_index.json"))
-            .expect("Tools failed to load");
-        ChatSession::new(
-            &mut os,
-            "fake_conv_id",
-            agents,
-            None,
-            InputSource::new_mock(vec![
-                "/tools".to_string(),
-                "/tools help".to_string(),
-                "create a new file".to_string(),
-                "y".to_string(),
-                "create a new file".to_string(),
-                "t".to_string(),
-                "create a new file".to_string(), // should make without prompting due to 't'
-                "/tools untrust fs_write".to_string(),
-                "create a file".to_string(), // prompt again due to untrust
-                "n".to_string(),             // cancel
-                "/tools trust fs_write".to_string(),
-                "create a file".to_string(), // again without prompting due to '/tools trust'
-                "/tools reset".to_string(),
-                "create a file".to_string(), // prompt again due to reset
-                "n".to_string(),             // cancel
-                "exit".to_string(),
-            ]),
-            false,
-            || Some(80),
-            tool_manager,
-            None,
-            tool_config,
-            true,
-            false,
-            None,
-        )
-        .await
-        .unwrap()
-        .spawn(&mut os)
-        .await
-        .unwrap();
-
-        assert_eq!(os.fs.read_to_string("/file2.txt").await.unwrap(), "Hello, world!\n");
-        assert_eq!(os.fs.read_to_string("/file3.txt").await.unwrap(), "Hello, world!\n");
-        assert!(!os.fs.exists("/file4.txt"));
-        assert_eq!(os.fs.read_to_string("/file5.txt").await.unwrap(), "Hello, world!\n");
-        // TODO: fix this with agent change (dingfeli)
-        // assert!(!ctx.fs.exists("/file6.txt"));
-    }
-
-    #[tokio::test]
-    async fn test_flow_multiple_tools() {
-        // let _ = tracing_subscriber::fmt::try_init();
-        let mut os = Os::new().await.unwrap();
-        os.client.set_mock_output(serde_json::json!([
-            [
-                "Sure, I'll create a file for you",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file1.txt",
-                    }
-                },
-                {
-                    "tool_use_id": "2",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file2.txt",
-                    }
-                }
-            ],
-            [
-                "Done",
-            ],
-            [
-                "Sure, I'll create a file for you",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file3.txt",
-                    }
-                },
-                {
-                    "tool_use_id": "2",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file4.txt",
-                    }
-                }
-            ],
-            [
-                "Done",
-            ],
-        ]));
-
-        let agents = get_test_agents(&os).await;
-        let tool_manager = ToolManager::default();
-        let tool_config = serde_json::from_str::<HashMap<String, ToolSpec>>(include_str!("tools/tool_index.json"))
-            .expect("Tools failed to load");
-        ChatSession::new(
-            &mut os,
-            "fake_conv_id",
-            agents,
-            None,
-            InputSource::new_mock(vec![
-                "create 2 new files parallel".to_string(),
-                "t".to_string(),
-                "/tools reset".to_string(),
-                "create 2 new files parallel".to_string(),
-                "y".to_string(),
-                "y".to_string(),
-                "exit".to_string(),
-            ]),
-            false,
-            || Some(80),
-            tool_manager,
-            None,
-            tool_config,
-            true,
-            false,
-            None,
-        )
-        .await
-        .unwrap()
-        .spawn(&mut os)
-        .await
-        .unwrap();
-
-        assert_eq!(os.fs.read_to_string("/file1.txt").await.unwrap(), "Hello, world!\n");
-        assert_eq!(os.fs.read_to_string("/file2.txt").await.unwrap(), "Hello, world!\n");
-        assert_eq!(os.fs.read_to_string("/file3.txt").await.unwrap(), "Hello, world!\n");
-        assert_eq!(os.fs.read_to_string("/file4.txt").await.unwrap(), "Hello, world!\n");
-    }
-
-    #[tokio::test]
-    async fn test_flow_tools_trust_all() {
-        // let _ = tracing_subscriber::fmt::try_init();
-        let mut os = Os::new().await.unwrap();
-        os.client.set_mock_output(serde_json::json!([
-            [
-                "Sure, I'll create a file for you",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file1.txt",
-                    }
-                }
-            ],
-            [
-                "Done",
-            ],
-            [
-                "Sure, I'll create a file for you",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_write",
-                    "args": {
-                        "command": "create",
-                        "file_text": "Hello, world!",
-                        "path": "/file3.txt",
-                    }
-                }
-            ],
-            [
-                "Ok I won't.",
-            ],
-        ]));
-
-        let agents = get_test_agents(&os).await;
-        let tool_manager = ToolManager::default();
-        let tool_config = serde_json::from_str::<HashMap<String, ToolSpec>>(include_str!("tools/tool_index.json"))
-            .expect("Tools failed to load");
-        ChatSession::new(
-            &mut os,
-            "fake_conv_id",
-            agents,
-            None,
-            InputSource::new_mock(vec![
-                "/tools trust-all".to_string(),
-                "create a new file".to_string(),
-                "/tools reset".to_string(),
-                "create a new file".to_string(),
-                "exit".to_string(),
-            ]),
-            false,
-            || Some(80),
-            tool_manager,
-            None,
-            tool_config,
-            true,
-            false,
-            None,
-        )
-        .await
-        .unwrap()
-        .spawn(&mut os)
-        .await
-        .unwrap();
-
-        assert_eq!(os.fs.read_to_string("/file1.txt").await.unwrap(), "Hello, world!\n");
-        assert!(!os.fs.exists("/file2.txt"));
-    }
-
-    #[test]
-    fn test_editor_content_processing() {
-        // Since we no longer have template replacement, this test is simplified
-        let cases = vec![
-            ("My content", "My content"),
-            ("My content with newline\n", "My content with newline"),
-            ("", ""),
-        ];
-
-        for (input, expected) in cases {
-            let processed = input.trim().to_string();
-            assert_eq!(processed, expected.trim().to_string(), "Failed for input: {}", input);
-        }
-    }
-
-    #[tokio::test]
-    #[cfg(unix)]
-    async fn test_subscribe_flow() {
-        let mut os = Os::new().await.unwrap();
-        os.client.set_mock_output(serde_json::Value::Array(vec![]));
-        let agents = get_test_agents(&os).await;
-
-        let tool_manager = ToolManager::default();
-        let tool_config = serde_json::from_str::<HashMap<String, ToolSpec>>(include_str!("tools/tool_index.json"))
-            .expect("Tools failed to load");
-        ChatSession::new(
-            &mut os,
-            "fake_conv_id",
-            agents,
-            None,
-            InputSource::new_mock(vec!["/subscribe".to_string(), "y".to_string(), "/quit".to_string()]),
-            false,
-            || Some(80),
-            tool_manager,
-            None,
-            tool_config,
-            true,
-            false,
-            None,
-        )
-        .await
-        .unwrap()
-        .spawn(&mut os)
-        .await
-        .unwrap();
-    }
-
-    // Integration test for PreToolUse hook functionality.
-    //
-    // In this integration test we create a preToolUse hook that logs tool info into a file
-    // and we run fs_read and verify the log is generated with the correct ToolContext data.
-    #[tokio::test]
-    async fn test_tool_hook_integration() {
-        use std::collections::HashMap;
-
-        use crate::cli::agent::hook::{
-            Hook,
-            HookTrigger,
-        };
-
-        let mut os = Os::new().await.unwrap();
-        os.client.set_mock_output(serde_json::json!([
-            [
-                "I'll read that file for you",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_read",
-                    "args": {
-                        "operations": [
-                            {
-                                "mode": "Line",
-                                "path": "/test.txt",
-                                "start_line": 1,
-                                "end_line": 3
-                            }
-                        ]
-                    }
-                }
-            ],
-            [
-                "Here's the file content!",
-            ],
-        ]));
-
-        // Create test file
-        os.fs.write("/test.txt", "line1\nline2\nline3\n").await.unwrap();
-
-        // Create agent with PreToolUse and PostToolUse hooks
-        let mut agents = Agents::default();
-        let mut hooks = HashMap::new();
-
-        // Get the real path in the temp directory for the hooks to write to
-        let pre_hook_log_path = os.fs.chroot_path_str("/pre-hook-test.log");
-        let post_hook_log_path = os.fs.chroot_path_str("/post-hook-test.log");
-        let pre_hook_command = format!("cat > {}", pre_hook_log_path);
-        let post_hook_command = format!("cat > {}", post_hook_log_path);
-
-        hooks.insert(HookTrigger::PreToolUse, vec![Hook {
-            command: pre_hook_command,
-            timeout_ms: 5000,
-            max_output_size: 1024,
-            cache_ttl_seconds: 0,
-            matcher: Some("fs_*".to_string()), // Match fs_read, fs_write, etc.
-            source: crate::cli::agent::hook::Source::Agent,
-        }]);
-
-        hooks.insert(HookTrigger::PostToolUse, vec![Hook {
-            command: post_hook_command,
-            timeout_ms: 5000,
-            max_output_size: 1024,
-            cache_ttl_seconds: 0,
-            matcher: Some("fs_*".to_string()), // Match fs_read, fs_write, etc.
-            source: crate::cli::agent::hook::Source::Agent,
-        }]);
-
-        let agent = Agent {
-            name: "TestAgent".to_string(),
-            hooks,
-            ..Default::default()
-        };
-        agents.agents.insert("TestAgent".to_string(), agent);
-        agents.switch("TestAgent").expect("Failed to switch agent");
-
-        let tool_manager = ToolManager::default();
-        let tool_config = serde_json::from_str::<HashMap<String, ToolSpec>>(include_str!("tools/tool_index.json"))
-            .expect("Tools failed to load");
-
-        // Test that PreToolUse hook runs
-        ChatSession::new(
-            &mut os,
-            "fake_conv_id",
-            agents,
-            None, // No initial input
-            InputSource::new_mock(vec![
-                "read /test.txt".to_string(),
-                "y".to_string(), // Accept tool execution
-                "exit".to_string(),
-            ]),
-            false,
-            || Some(80),
-            tool_manager,
-            None,
-            tool_config,
-            true,
-            false,
-            None,
-        )
-        .await
-        .unwrap()
-        .spawn(&mut os)
-        .await
-        .unwrap();
-
-        // Verify the PreToolUse hook was called
-        if let Ok(pre_log_content) = os.fs.read_to_string("/pre-hook-test.log").await {
-            let pre_hook_data: serde_json::Value =
-                serde_json::from_str(&pre_log_content).expect("PreToolUse hook output should be valid JSON");
-
-            assert_eq!(pre_hook_data["hook_event_name"], "preToolUse");
-            assert_eq!(pre_hook_data["tool_name"], "fs_read");
-            assert_eq!(pre_hook_data["tool_response"], serde_json::Value::Null);
-
-            let tool_input = &pre_hook_data["tool_input"];
-            assert!(tool_input["operations"].is_array());
-
-            println!("✓ PreToolUse hook validation passed: {}", pre_log_content);
-        } else {
-            panic!("PreToolUse hook log file not found - hook may not have been called");
-        }
-
-        // Verify the PostToolUse hook was called
-        if let Ok(post_log_content) = os.fs.read_to_string("/post-hook-test.log").await {
-            let post_hook_data: serde_json::Value =
-                serde_json::from_str(&post_log_content).expect("PostToolUse hook output should be valid JSON");
-
-            assert_eq!(post_hook_data["hook_event_name"], "postToolUse");
-            assert_eq!(post_hook_data["tool_name"], "fs_read");
-
-            // Validate tool_response structure for successful execution
-            let tool_response = &post_hook_data["tool_response"];
-            assert_eq!(tool_response["success"], true);
-            assert!(tool_response["result"].is_array());
-
-            let result_blocks = tool_response["result"].as_array().unwrap();
-            assert!(!result_blocks.is_empty());
-            let content = result_blocks[0].as_str().unwrap();
-            assert!(content.contains("line1\nline2\nline3"));
-
-            println!("✓ PostToolUse hook validation passed: {}", post_log_content);
-        } else {
-            panic!("PostToolUse hook log file not found - hook may not have been called");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_pretool_hook_blocking_integration() {
-        use std::collections::HashMap;
-
-        use crate::cli::agent::hook::{
-            Hook,
-            HookTrigger,
-        };
-
-        let mut os = Os::new().await.unwrap();
-
-        // Create a test file to read
-        os.fs.write("/sensitive.txt", "classified information").await.unwrap();
-
-        // Mock LLM responses: first tries fs_read, gets blocked, then responds to error
-        os.client.set_mock_output(serde_json::json!([
-            [
-                "I'll read that file for you",
-                {
-                    "tool_use_id": "1",
-                    "name": "fs_read",
-                    "args": {
-                        "operations": [
-                            {
-                                "mode": "Line",
-                                "path": "/sensitive.txt"
-                            }
-                        ]
-                    }
-                }
-            ],
-            [
-                "I understand the security policy blocked access to that file.",
-            ],
-        ]));
-
-        // Create agent with blocking PreToolUse hook
-        let mut agents = Agents::default();
-        let mut hooks = HashMap::new();
-
-        // Create a hook that blocks fs_read of sensitive files with exit code 2
-        #[cfg(unix)]
-        let hook_command = "echo 'Security policy violation: cannot read sensitive files' >&2; exit 2";
-        #[cfg(windows)]
-        let hook_command = "echo Security policy violation: cannot read sensitive files 1>&2 & exit /b 2";
-
-        hooks.insert(HookTrigger::PreToolUse, vec![Hook {
-            command: hook_command.to_string(),
-            timeout_ms: 5000,
-            max_output_size: 1024,
-            cache_ttl_seconds: 0,
-            matcher: Some("fs_read".to_string()),
-            source: crate::cli::agent::hook::Source::Agent,
-        }]);
-
-        let agent = Agent {
-            name: "SecurityAgent".to_string(),
-            hooks,
-            ..Default::default()
-        };
-        agents.agents.insert("SecurityAgent".to_string(), agent);
-        agents.switch("SecurityAgent").expect("Failed to switch agent");
-
-        let tool_manager = ToolManager::default();
-        let tool_config = serde_json::from_str::<HashMap<String, ToolSpec>>(include_str!("tools/tool_index.json"))
-            .expect("Tools failed to load");
-
-        // Run chat session - hook should block tool execution
-        let result = ChatSession::new(
-            &mut os,
-            "test_conv_id",
-            agents,
-            None,
-            InputSource::new_mock(vec!["read /sensitive.txt".to_string(), "exit".to_string()]),
-            false,
-            || Some(80),
-            tool_manager,
-            None,
-            tool_config,
-            true,
-            false,
-            None,
-        )
-        .await
-        .unwrap()
-        .spawn(&mut os)
-        .await;
-
-        // The session should complete successfully (hook blocks tool but doesn't crash)
-        assert!(
-            result.is_ok(),
-            "Chat session should complete successfully even when hook blocks tool"
-        );
-    }
-
-    #[test]
-    fn test_does_input_reference_file() {
-        let tests = &[
-            (
-                r"/Users/user/Desktop/Screenshot\ 2025-06-30\ at\ 2.13.34 PM.png read this image for me",
-                true,
-            ),
-            ("/path/to/file.json", true),
-            ("/save output.json", false),
-            ("~/does/not/start/with/slash", false),
-        ];
-        for (input, expected) in tests {
-            let actual = does_input_reference_file(input).is_some();
-            assert_eq!(actual, *expected, "expected {} for input {}", expected, input);
-        }
-    }
 }

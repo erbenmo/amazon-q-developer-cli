@@ -168,7 +168,11 @@ impl RootSubcommand {
             Self::Settings(settings_args) => settings_args.execute(os).await,
             Self::Issue(args) => args.execute(os).await,
             Self::Version { changelog } => Cli::print_version(changelog),
-            Self::Chat(args) => args.execute(os).await,
+            Self::Chat(args) => {
+                // Create dummy channel for CLI mode - will be replaced by ACP agent
+                let (_, dummy_receiver) = tokio::sync::mpsc::channel::<String>(1);
+                args.execute(os, dummy_receiver).await
+            },
             Self::Mcp(args) => args.execute(os, &mut std::io::stderr()).await,
         }
     }

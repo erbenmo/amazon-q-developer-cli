@@ -16,4 +16,9 @@ I am planning to have just 1 Session for the entire life cycle (I also control t
 
 Use context7 MCP to gather context for AgentClientProtocol
 
-I have added an example ACP agent and client under crates/chat-cli/src/bin/
+
+Completed
+1. I have added an example ACP agent and client under crates/chat-cli/src/bin/
+2. I need to make sure ChatSession doesn't read prompt from input_source, instead it read from a channel that ACP agent can populate.
+
+TODO:
