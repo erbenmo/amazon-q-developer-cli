@@ -9,8 +9,55 @@
 //! ```
 
 use agent_client_protocol::{self as acp, Client as _};
+use chat_cli_ui::protocol::Event;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+// This component reads structured events from Conduit and send them to ACP Client as SessionUpdate
+struct SessionUpdateSender {
+    notification_tx: mpsc::UnboundedSender<acp::SessionNotification>,
+}
+
+impl SessionUpdateSender {
+    fn new(notification_tx: mpsc::UnboundedSender<acp::SessionNotification>) -> Self {
+        Self { notification_tx }
+    }
+
+    fn spawn_event_processor(
+        &self,
+        event_receiver: std::sync::mpsc::Receiver<Event>,
+        session_id: acp::SessionId,
+    ) {
+        let tx = self.notification_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            while let Ok(event) = event_receiver.recv() {
+                if let Some(session_notification) = Self::convert_event_to_session_notification(event, &session_id) {
+                    let _ = tx.send(session_notification);
+                }
+            }
+        });
+    }
+
+    fn convert_event_to_session_notification(event: Event, session_id: &acp::SessionId) -> Option<acp::SessionNotification> {
+        match event {
+            Event::TextMessageContent(content) => {
+                Some(acp::SessionNotification {
+                    session_id: session_id.clone(),
+                    update: acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
+                        content: acp::ContentBlock::Text(acp::TextContent {
+                            text: String::from_utf8_lossy(&content.delta).to_string(),
+                            annotations: None,
+                            meta: None,
+                        }),
+                        meta: None,
+                    }),
+                    meta: None,
+                })
+            },
+            _ => None,
+        }
+    }
+}
 
 struct QCliAgent {
     // this is the queue for sending SessionUpdate to client

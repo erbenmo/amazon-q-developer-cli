@@ -23,3 +23,4 @@ Completed
 3. I completely removed input_source from the code base
 4. Completely removed spinner from ChatSession
 5. Disable the Conduit code that process event from the queue and printing to screen (because we need to reserve STDIO for ACP protocol. UI is handled by the ACP Client)
+6. Add SessionUpdateSender responsible for reading structured events from Conduit and send them to ACP connection as SessionUpdate
