@@ -236,7 +236,8 @@ pub struct ChatArgs {
 }
 
 impl ChatArgs {
-    pub async fn create_chat_session(mut self, os: &mut Os, input_receiver: tokio::sync::mpsc::Receiver<String>) -> Result<ChatSession> {
+    pub async fn create_chat_session(mut self, os: &mut Os, input_receiver: tokio::sync::mpsc::Receiver<String>,
+        control_end_stderr: ControlEnd<DestinationStderr>, control_end_stdout: ControlEnd<DestinationStdout>) -> Result<ChatSession> {
         let mut input: Option<String> = self.input;
 
         if self.no_interactive && input.is_none() {
@@ -420,10 +421,6 @@ impl ChatArgs {
             .await?;
         let tool_config = tool_manager.load_tools(os, &mut stderr).await?;
 
-        let should_send_structured_msg = should_send_structured_message(os);
-        let (_, _, control_end_stderr, control_end_stdout) =
-            get_legacy_conduits(should_send_structured_msg);
-
         return ChatSession::new(
             os,
             &conversation_id,
@@ -444,7 +441,10 @@ impl ChatArgs {
     }
 
     pub async fn execute(self, os: &mut Os, input_receiver: tokio::sync::mpsc::Receiver<String>) -> Result<ExitCode> {
-        self.create_chat_session(os, input_receiver).await?.spawn(os).await.map(|_| ExitCode::SUCCESS)
+        let should_send_structured_msg = should_send_structured_message(os);
+        let (_, _, control_end_stderr, control_end_stdout) =
+            get_legacy_conduits(should_send_structured_msg);
+        self.create_chat_session(os, input_receiver, control_end_stderr, control_end_stdout).await?.spawn(os).await.map(|_| ExitCode::SUCCESS)
     }
 
 }
@@ -1852,15 +1852,11 @@ impl ChatSession {
             )?;
         }
 
-
-
         execute!(self.stderr, StyledText::reset(), StyledText::reset_attributes())?;
         let user_input = match self.read_user_input_from_channel().await {
             Some(input) => input,
             None => return Ok(ChatState::Exit),
         };
-
-
 
         self.conversation.append_user_transcript(&user_input);
         Ok(ChatState::HandleInput { input: user_input })
@@ -3256,8 +3252,6 @@ impl ChatSession {
     async fn read_user_input_from_channel(&mut self) -> Option<String> {
         self.input_receiver.recv().await
     }
-
-
 
     async fn send_tool_use_telemetry(&mut self, os: &Os) {
         for (_, mut event) in self.tool_use_telemetry_events.drain() {

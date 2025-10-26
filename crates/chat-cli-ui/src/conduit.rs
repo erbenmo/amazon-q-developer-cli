@@ -1,5 +1,6 @@
 use std::io::Write as _;
 use std::marker::PhantomData;
+use std::sync::mpsc::Receiver;
 
 use crossterm::style::{
     self,
@@ -402,6 +403,30 @@ pub fn get_legacy_conduits(
             sender: state_tx,
             pass_through_destination: PhantomData,
         },
+    )
+}
+
+pub fn initialize_conduit() -> (
+    ControlEnd<DestinationStderr>,
+    ControlEnd<DestinationStdout>,
+    Receiver<Event>,
+) {
+    let should_send_structured_event = true;
+    let (state_tx, state_rx) = std::sync::mpsc::channel::<Event>();
+    (
+        ControlEnd {
+            current_event: None,
+            should_send_structured_event,
+            sender: state_tx.clone(),
+            pass_through_destination: PhantomData,
+        },
+        ControlEnd {
+            current_event: None,
+            should_send_structured_event,
+            sender: state_tx,
+            pass_through_destination: PhantomData,
+        },
+        state_rx,
     )
 }
 
