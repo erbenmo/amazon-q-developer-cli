@@ -21,6 +21,5 @@ Completed
 1. I have added an example ACP agent and client under crates/chat-cli/src/bin/
 2. I need to make sure ChatSession doesn't read prompt from input_source, instead it read from a channel that ACP agent can populate.
 3. I completely removed input_source from the code base
-4. Completely removed spinner
-
-TODO:
+4. Completely removed spinner from ChatSession
+5. Disable the Conduit code that process event from the queue and printing to screen (because we need to reserve STDIO for ACP protocol. UI is handled by the ACP Client)
