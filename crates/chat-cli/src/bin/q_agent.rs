@@ -10,7 +10,7 @@
 
 use agent_client_protocol::{self as acp, Client as _};
 use chat_cli_ui::protocol::Event;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 // This component reads structured events from Conduit and send them to ACP Client as SessionUpdate
@@ -60,17 +60,14 @@ impl SessionUpdateSender {
 }
 
 struct QCliAgent {
-    // this is the queue for sending SessionUpdate to client
-    session_update_tx: mpsc::UnboundedSender<(acp::SessionNotification, oneshot::Sender<()>)>,
+    session_update_sender: SessionUpdateSender,
     next_session_id: std::sync::atomic::AtomicU64,
 }
 
 impl QCliAgent {
-    fn new(
-        session_update_tx: mpsc::UnboundedSender<(acp::SessionNotification, oneshot::Sender<()>)>,
-    ) -> Self {
+    fn new(session_update_sender: SessionUpdateSender) -> Self {
         Self {
-            session_update_tx,
+            session_update_sender,
             next_session_id: std::sync::atomic::AtomicU64::new(0),
         }
     }
@@ -154,29 +151,19 @@ impl acp::Agent for QCliAgent {
             }
         }
 
-        // this is used so we can wait for the backgruond thread to send back the SessionUpdate
-        let (tx, rx) = oneshot::channel();
-
-        // Send response back through session updates
-        self.session_update_tx
-            .send((
-                acp::SessionNotification {
-                    session_id: arguments.session_id.clone(),
-                    update: acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                        content: acp::ContentBlock::Text(acp::TextContent {
-                            text: format!("Echo: {}", prompt_text),
-                            annotations: None,
-                            meta: None,
-                        }),
-                        meta: None,
-                    }),
-                    meta: None,
-                },
-                tx,
-            ))
-            .map_err(|_| acp::Error::internal_error())?;
+        // TODO: Replace this echo with actual ChatSession processing
+        // For now, send echo response through SessionUpdateSender
+        let echo_event = Event::TextMessageContent(chat_cli_ui::protocol::TextMessageContent {
+            message_id: arguments.session_id.0.to_string(),
+            delta: format!("Echo: {}", prompt_text).into_bytes(),
+        });
         
-        rx.await.map_err(|_| acp::Error::internal_error())?;
+        if let Some(notification) = SessionUpdateSender::convert_event_to_session_notification(
+            echo_event, 
+            &arguments.session_id
+        ) {
+            let _ = self.session_update_sender.notification_tx.send(notification);
+        }
 
         Ok(acp::PromptResponse {
             stop_reason: acp::StopReason::EndTurn,
@@ -215,10 +202,13 @@ async fn main() -> acp::Result<()> {
     let local_set = tokio::task::LocalSet::new();
     local_set
         .run_until(async move {
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let (notification_tx, mut notification_rx) = tokio::sync::mpsc::unbounded_channel();
+            
+            // Create SessionUpdateSender
+            let session_update_sender = SessionUpdateSender::new(notification_tx);
             
             // Create the agent
-            let agent = QCliAgent::new(tx);
+            let agent = QCliAgent::new(session_update_sender);
             
             // Start up the agent connected to stdio
             let (conn, handle_io) =
@@ -226,15 +216,14 @@ async fn main() -> acp::Result<()> {
                     tokio::task::spawn_local(fut);
                 });
             
-            // Create a background thread that process from the queue and send back session update to Client
+            // Process session notifications from conduit events
             tokio::task::spawn_local(async move {
-                while let Some((session_notification, tx)) = rx.recv().await {
+                while let Some(session_notification) = notification_rx.recv().await {
                     let result = conn.session_notification(session_notification).await;
                     if let Err(e) = result {
                         eprintln!("Error sending session notification: {e}");
                         break;
                     }
-                    tx.send(()).ok();
                 }
             });
             
