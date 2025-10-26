@@ -67,12 +67,6 @@ pub async fn get_detailed_usage_data(session: &mut ChatSession, os: &Os) -> Resu
     })
 }
 
-/// Get total usage percentage (simple interface for prompt generation)
-pub async fn get_total_usage_percentage(session: &mut ChatSession, os: &Os) -> Result<f32, ChatError> {
-    let data = get_detailed_usage_data(session, os).await?;
-    Ok(calculate_usage_percentage(data.total_tokens, data.context_window_size))
-}
-
 /// Arguments for the usage command that displays token usage statistics and context window
 /// information.
 ///

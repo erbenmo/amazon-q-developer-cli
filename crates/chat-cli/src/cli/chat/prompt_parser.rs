@@ -1,5 +1,3 @@
-use crate::cli::agent::DEFAULT_AGENT_NAME;
-
 /// Components extracted from a prompt string
 #[derive(Debug, PartialEq)]
 pub struct PromptComponents {
@@ -82,73 +80,9 @@ pub fn parse_prompt_components(prompt: &str) -> Option<PromptComponents> {
     }
 }
 
-pub fn generate_prompt(
-    current_profile: Option<&str>,
-    warning: bool,
-    tangent_mode: bool,
-    usage_percentage: Option<f32>,
-) -> String {
-    // Generate plain text prompt that will be colored by highlight_prompt
-    let warning_symbol = if warning { "!" } else { "" };
-    let profile_part = current_profile
-        .filter(|&p| p != DEFAULT_AGENT_NAME)
-        .map(|p| format!("[{p}] "))
-        .unwrap_or_default();
-
-    let percentage_part = usage_percentage.map(|p| format!("{:.0}% ", p)).unwrap_or_default();
-
-    if tangent_mode {
-        format!("{profile_part}{percentage_part}↯ {warning_symbol}> ")
-    } else {
-        format!("{profile_part}{percentage_part}{warning_symbol}> ")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_generate_prompt() {
-        // Test default prompt (no profile)
-        assert_eq!(generate_prompt(None, false, false, None), "> ");
-        // Test default prompt with warning
-        assert_eq!(generate_prompt(None, true, false, None), "!> ");
-        // Test tangent mode
-        assert_eq!(generate_prompt(None, false, true, None), "↯ > ");
-        // Test tangent mode with warning
-        assert_eq!(generate_prompt(None, true, true, None), "↯ !> ");
-        // Test default profile (should be same as no profile)
-        assert_eq!(generate_prompt(Some(DEFAULT_AGENT_NAME), false, false, None), "> ");
-        // Test custom profile
-        assert_eq!(
-            generate_prompt(Some("test-profile"), false, false, None),
-            "[test-profile] > "
-        );
-        // Test custom profile with tangent mode
-        assert_eq!(
-            generate_prompt(Some("test-profile"), false, true, None),
-            "[test-profile] ↯ > "
-        );
-        // Test another custom profile with warning
-        assert_eq!(generate_prompt(Some("dev"), true, false, None), "[dev] !> ");
-        // Test custom profile with warning and tangent mode
-        assert_eq!(generate_prompt(Some("dev"), true, true, None), "[dev] ↯ !> ");
-        // Test custom profile with usage percentage
-        assert_eq!(
-            generate_prompt(Some("rust-agent"), false, false, Some(6.2)),
-            "[rust-agent] 6% > "
-        );
-        // Test custom profile with usage percentage and warning
-        assert_eq!(
-            generate_prompt(Some("rust-agent"), true, false, Some(15.7)),
-            "[rust-agent] 16% !> "
-        );
-        // Test usage percentage without profile
-        assert_eq!(generate_prompt(None, false, false, Some(25.3)), "25% > ");
-        // Test usage percentage with tangent mode
-        assert_eq!(generate_prompt(None, false, true, Some(8.9)), "9% ↯ > ");
-    }
 
     #[test]
     fn test_parse_prompt_components() {
