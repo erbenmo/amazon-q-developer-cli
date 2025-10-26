@@ -10,8 +10,10 @@
 
 use agent_client_protocol::{self as acp, Client as _};
 use chat_cli_ui::protocol::Event;
+use chat_cli::cli::chat::{ChatArgs, ChatSession};
 use tokio::sync::{mpsc};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use eyre::Result;
 
 // This component reads structured events from Conduit and send them to ACP Client as SessionUpdate
 struct SessionUpdateSender {
@@ -70,6 +72,21 @@ impl QCliAgent {
             session_update_sender,
             next_session_id: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    async fn initialize_chat_session(&self, os: &mut chat_cli::os::Os, input_receiver: tokio::sync::mpsc::Receiver<String>) -> Result<ChatSession> {
+        let chat_args = ChatArgs {
+            resume: false,
+            agent: None,
+            model: None,
+            trust_all_tools: false,
+            trust_tools: None,
+            no_interactive: true,
+            input: None,
+            wrap: None,
+        };
+        
+        chat_args.create_chat_session(os, input_receiver).await
     }
 }
 
