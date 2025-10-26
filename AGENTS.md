@@ -12,8 +12,8 @@ I think conduit can implement the "Agent" protocol. For example, when it receive
 
 Feel free to look at the ACP rust-sdk here: /Users/moerben/Documents/Work/2025/Project/UI/rust-sdk. 
 
-Take a look at an example ACP "Agent" in /Users/moerben/Documents/Work/2025/Project/UI/rust-sdk/examples/agent.rs
-
 I am planning to have just 1 Session for the entire life cycle (I also control the "Client")
 
 Use context7 MCP to gather context for AgentClientProtocol
+
+I have added an example ACP agent and client under crates/chat-cli/src/bin/
