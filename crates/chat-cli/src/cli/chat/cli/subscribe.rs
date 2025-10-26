@@ -148,7 +148,8 @@ async fn upgrade_to_pro(os: &mut Os, session: &mut ChatSession) -> Result<(), Ch
         "]: ".dark_grey(),
     );
 
-    let user_input = session.read_user_input(&prompt, true);
+    // ACP Agent: No interactive input, always decline subscription
+    let user_input = Some("n".to_string());
     queue!(session.stderr, StyledText::reset(), style::Print("\n"),)?;
 
     if !user_input.is_some_and(|i| ["y", "Y"].contains(&i.as_str())) {

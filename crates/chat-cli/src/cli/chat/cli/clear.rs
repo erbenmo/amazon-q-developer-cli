@@ -41,11 +41,8 @@ impl ClearArgs {
             cursor::Show,
         )?;
 
-        // Setting `exit_on_single_ctrl_c` for better ux: exit the confirmation dialog rather than the CLI
-        let user_input = match session.read_user_input("> ".yellow().to_string().as_str(), true) {
-            Some(input) => input,
-            None => "".to_string(),
-        };
+        // ACP Agent: No interactive input, always decline confirmation
+        let user_input = "n".to_string();
 
         if ["y", "Y"].contains(&user_input.as_str()) {
             session.conversation.clear();

@@ -90,7 +90,6 @@ use eyre::{
     bail,
     eyre,
 };
-use input_source::InputSource;
 use message::{
     AssistantMessage,
     AssistantToolUse,
@@ -431,7 +430,6 @@ impl ChatArgs {
             &conversation_id,
             agents,
             input,
-            InputSource::new(os, prompt_request_sender, prompt_response_receiver)?,
             input_receiver,
             self.resume,
             || terminal::window_size().map(|s| s.columns.into()).ok(),
@@ -574,7 +572,6 @@ pub struct ChatSession {
     initial_input: Option<String>,
     /// Whether we're starting a new conversation or continuing an old one.
     existing_conversation: bool,
-    input_source: InputSource,
     /// Channel for receiving user input from ACP agent
     pub input_receiver: tokio::sync::mpsc::Receiver<String>,
     /// Width of the terminal, required for [ParseState].
@@ -614,7 +611,6 @@ impl ChatSession {
         conversation_id: &str,
         mut agents: Agents,
         mut input: Option<String>,
-        input_source: InputSource,
         input_receiver: tokio::sync::mpsc::Receiver<String>,
         resume_conversation: bool,
         terminal_width_provider: fn() -> Option<usize>,
@@ -724,7 +720,6 @@ impl ChatSession {
             stderr: control_end_stderr,
             initial_input: input,
             existing_conversation,
-            input_source,
             input_receiver,
             terminal_width_provider,
             spinner: None,
@@ -1890,26 +1885,7 @@ impl ChatSession {
             )?;
         }
 
-        // Do this here so that the skim integration sees an updated view of the context *during the current
-        // q session*. (e.g., if I add files to context, that won't show up for skim for the current
-        // q session unless we do this in prompt_user... unless you can find a better way)
-        #[cfg(unix)]
-        if let Some(ref context_manager) = self.conversation.context_manager {
-            use std::sync::Arc;
 
-            use crate::cli::chat::consts::DUMMY_TOOL_NAME;
-
-            let tool_names = self
-                .conversation
-                .tool_manager
-                .tn_map
-                .keys()
-                .filter(|name| *name != DUMMY_TOOL_NAME)
-                .cloned()
-                .collect::<Vec<_>>();
-            self.input_source
-                .put_skim_command_selector(os, Arc::new(context_manager.clone()), tool_names);
-        }
 
         execute!(self.stderr, StyledText::reset(), StyledText::reset_attributes())?;
         let user_input = match self.read_user_input_from_channel().await {
@@ -1917,26 +1893,7 @@ impl ChatSession {
             None => return Ok(ChatState::Exit),
         };
 
-        // Check if there's a pending clipboard paste from Ctrl+V
-        let pasted_paths = self.input_source.take_clipboard_pastes();
-        if !pasted_paths.is_empty() {
-            // Check if the input contains image markers
-            let image_marker_regex = regex::Regex::new(r"\[Image #\d+\]").unwrap();
-            if image_marker_regex.is_match(&user_input) {
-                // Join all paths with spaces for processing
-                let paths_str = pasted_paths
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ");
 
-                // Reset the counter for next message
-                self.input_source.reset_paste_count();
-
-                // Return HandleInput with all paths to automatically process the images
-                return Ok(ChatState::HandleInput { input: paths_str });
-            }
-        }
 
         self.conversation.append_user_transcript(&user_input);
         Ok(ChatState::HandleInput { input: user_input })
@@ -3364,36 +3321,7 @@ impl ChatSession {
         self.input_receiver.recv().await
     }
 
-    /// Helper function to read user input with a prompt and Ctrl+C handling
-    fn read_user_input(&mut self, prompt: &str, exit_on_single_ctrl_c: bool) -> Option<String> {
-        let mut ctrl_c = false;
-        loop {
-            match (self.input_source.read_line(Some(prompt)), ctrl_c) {
-                (Ok(Some(line)), _) => {
-                    if line.trim().is_empty() {
-                        continue; // Reprompt if the input is empty
-                    }
-                    return Some(line);
-                },
-                (Ok(None), false) => {
-                    if exit_on_single_ctrl_c {
-                        return None;
-                    }
-                    execute!(
-                        self.stderr,
-                        style::Print(format!(
-                            "\n(To exit the CLI, press Ctrl+C or Ctrl+D again or type {})\n\n",
-                            "/quit".green()
-                        ))
-                    )
-                    .unwrap_or_default();
-                    ctrl_c = true;
-                },
-                (Ok(None), true) => return None, // Exit if Ctrl+C was pressed twice
-                (Err(_), _) => return None,
-            }
-        }
-    }
+
 
     async fn send_tool_use_telemetry(&mut self, os: &Os) {
         for (_, mut event) in self.tool_use_telemetry_events.drain() {
