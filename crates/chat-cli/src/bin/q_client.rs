@@ -168,6 +168,20 @@ async fn main() -> Result<()> {
                 .await?;
 
             println!("Connected to Q CLI Agent! Session ID: {}", response.session_id.0);
+            
+    println!(
+        r#"
+      _     _
+     ( \---/ )
+      ) . . (
+     =\ T _ T /=
+       )     (
+      /       \
+     ( (  ) (  )
+      ""   ""
+"#
+    );
+            
             println!("Type messages to send to the agent (Ctrl+C to quit):");
 
             // Send prompts to the agent until stdin is closed

@@ -731,7 +731,7 @@ impl ChatSession {
 
     pub async fn next(&mut self, os: &mut Os) -> Result<(), ChatError> {
         if let Some(state) = &self.inner {
-            eprintln!(" ChatSession.Next: {}", state); // uses Display for ChatState
+            eprintln!(" ChatSession. Current State: {}", state); // uses Display for ChatState
         }
 
         // Update conversation state with new tool information
