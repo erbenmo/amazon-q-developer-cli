@@ -121,6 +121,7 @@ impl acp::Agent for QCliAgent {
         })
     }
 
+    // noop
     async fn authenticate(
         &self,
         _arguments: acp::AuthenticateRequest,
@@ -128,6 +129,7 @@ impl acp::Agent for QCliAgent {
         Ok(acp::AuthenticateResponse::default())
     }
 
+    // noop
     async fn new_session(&self, _arguments: acp::NewSessionRequest) -> Result<acp::NewSessionResponse, acp::Error> {
         Ok(acp::NewSessionResponse {
             session_id: self.session_id.clone(),
@@ -156,21 +158,22 @@ impl acp::Agent for QCliAgent {
             }
         }
 
-        // send prompt_text to user_input queue
-        // ChatSession will pick it up
+        // send prompt_text to user_input channel. ChatSession will pick it up
         self.user_input_sender.send(prompt_text).await.unwrap();
 
-        // TODO: Agent should really only return this when it have completed everything in this turn. (i.e. return LLM response, call tool, etc)
+        // TODO: Agent should really only return this when it has completed everything in this turn. (i.e. return LLM response, call tool, etc)
         Ok(acp::PromptResponse {
             stop_reason: acp::StopReason::EndTurn,
             meta: None,
         })
     }
 
+    // noop
     async fn cancel(&self, _args: acp::CancelNotification) -> Result<(), acp::Error> {
         Ok(())
     }
 
+    // noop
     async fn set_session_mode(
         &self,
         _args: acp::SetSessionModeRequest,
@@ -178,10 +181,12 @@ impl acp::Agent for QCliAgent {
         Ok(acp::SetSessionModeResponse::default())
     }
 
+    // noop
     async fn ext_method(&self, _args: acp::ExtRequest) -> Result<acp::ExtResponse, acp::Error> {
         Err(acp::Error::method_not_found())
     }
 
+    // noop
     async fn ext_notification(&self, _args: acp::ExtNotification) -> Result<(), acp::Error> {
         Ok(())
     }
