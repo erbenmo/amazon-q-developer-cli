@@ -77,9 +77,6 @@ impl acp::Client for QCliTestClient {
         args: acp::SessionNotification,
     ) -> acp::Result<(), acp::Error> {
 
-        eprintln!("Receiving!");
-
-
         match args.update {
             acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) => {
                 let text = match content {
@@ -89,7 +86,7 @@ impl acp::Client for QCliTestClient {
                     acp::ContentBlock::ResourceLink(resource_link) => resource_link.uri,
                     acp::ContentBlock::Resource(_) => "<resource>".into(),
                 };
-                println!("| Agent: {text}");
+                println!("{text}");
             }
             acp::SessionUpdate::UserMessageChunk { .. }
             | acp::SessionUpdate::AgentThoughtChunk { .. }
@@ -176,6 +173,8 @@ async fn main() -> Result<()> {
             // Send prompts to the agent until stdin is closed
             let mut rl = rustyline::DefaultEditor::new()?;
             while let Ok(line) = rl.readline("> ") {
+                eprintln!("Start of prompt loop");
+
                 if line.trim().is_empty() {
                     continue;
                 }
@@ -187,6 +186,8 @@ async fn main() -> Result<()> {
                         meta: None,
                     })
                     .await;
+
+                eprintln!("End of prompt loop");
                     
                 if let Err(e) = result {
                     eprintln!("Error: {e}");

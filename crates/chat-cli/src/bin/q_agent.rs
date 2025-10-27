@@ -37,7 +37,10 @@ impl SessionUpdateSender {
         tokio::task::spawn_local(async move {
             while let Some(event) = event_receiver.recv().await {
                 if let Some(session_notification) = Self::convert_event_to_session_notification(event, &session_id) {
-                    let _ = acp_connection.session_notification(session_notification);
+                    if let Err(e) = acp_connection.session_notification(session_notification).await {
+                        eprintln!("Failed to send session notification: {e}");
+                        break;
+                    }
                 }
             }
             eprintln!("Event receiver closed");
@@ -51,7 +54,6 @@ impl SessionUpdateSender {
         match event {
             Event::TextMessageContent(content) => {
                 let text = String::from_utf8_lossy(&content.delta).to_string();
-                eprintln!("Converting TextMessageContent: '{}'", text);
                 Some(acp::SessionNotification {
                     session_id: session_id.clone(),
                     update: acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
@@ -172,6 +174,9 @@ impl acp::Agent for QCliAgent {
         // For now, just sleep 5s to simulate processing
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         
+        
+        eprintln!("Out of Sleep!");
+
         Ok(acp::PromptResponse {
             stop_reason: acp::StopReason::EndTurn,
             meta: None,
