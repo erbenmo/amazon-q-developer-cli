@@ -226,7 +226,7 @@ async fn main() -> acp::Result<()> {
         model: None,
         trust_all_tools: false,
         trust_tools: None,
-        no_interactive: true,
+        no_interactive: false,
         input: None,
         wrap: None,
     };
@@ -249,6 +249,7 @@ async fn main() -> acp::Result<()> {
                         break;
                     }
                 }
+                eprintln!("ChatSession exited");
             });
 
             let (conn, handle_io) = acp::AgentSideConnection::new(agent, outgoing, incoming, |fut| {
