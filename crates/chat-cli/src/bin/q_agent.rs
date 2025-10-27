@@ -192,7 +192,7 @@ impl acp::Agent for QCliAgent {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> acp::Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
@@ -200,49 +200,49 @@ async fn main() -> acp::Result<()> {
     let outgoing = tokio::io::stdout().compat_write();
     let incoming = tokio::io::stdin().compat();
 
+    // Create the agent
+    let (agent, user_input_receiver) = QCliAgent::new().await;
+
+    // Initialize conduit
+    // chat_event_receiver is used to receive Conduit events from ChatSession
+    let (control_end_stderr, control_end_stdout, chat_event_receiver) = initialize_conduit();
+
+    // SessionUpdateSender poll structured events (emitted by ChatSession) and send them to ACP Client
+    let session_update_sender = SessionUpdateSender::new(agent.session_id.clone());
+
+    // Create chat session
+    let mut os = Os::new().await.unwrap();
+    let chat_args = ChatArgs {
+        resume: false,
+        agent: None,
+        model: None,
+        trust_all_tools: false,
+        trust_tools: None,
+        no_interactive: true,
+        input: None,
+        wrap: None,
+    };
+    let mut chat_session = chat_args
+        .create_chat_session(&mut os, user_input_receiver, control_end_stderr, control_end_stdout)
+        .await
+        .unwrap();
+
+    // Start up the agent connected to stdio
+    // Why are we using local_set ?!
     let local_set = tokio::task::LocalSet::new();
     local_set
         .run_until(async move {
-            // Create the agent
-            let (agent, user_input_receiver) = QCliAgent::new().await;
-
-            // Initialize conduit
-            // chat_event_receiver is used to receive Conduit events from ChatSession
-            let (control_end_stderr, control_end_stdout, chat_event_receiver) = initialize_conduit();
-
-            // SessionUpdateSender poll structured events (emitted by ChatSession) and send them to ACP Client
-            // This doesn't make sense. SessionUpdateSender should send the request to ACP connection!
-            let session_update_sender = SessionUpdateSender::new(agent.session_id.clone());
-
-            // Create chat session
-            let mut os = Os::new().await.unwrap();
-            let chat_args = ChatArgs {
-                resume: false,
-                agent: None,
-                model: None,
-                trust_all_tools: false,
-                trust_tools: None,
-                no_interactive: true,
-                input: None,
-                wrap: None,
-            };
-            let mut chat_session = chat_args
-                .create_chat_session(&mut os, user_input_receiver, control_end_stderr, control_end_stdout)
-                .await
-                .unwrap();
-
             // Spawn ChatSession state machine to run in background
-            let mut os = Os::new().await.unwrap();
+            let mut os_for_chat = Os::new().await.unwrap();
             tokio::task::spawn_local(async move {
                 while !matches!(chat_session.inner, Some(ChatState::Exit)) {
-                    if let Err(e) = chat_session.next(&mut os).await {
+                    if let Err(e) = chat_session.next(&mut os_for_chat).await {
                         eprintln!("ChatSession error: {e}");
                         break;
                     }
                 }
             });
 
-            // Start up the agent connected to stdio
             let (conn, handle_io) = acp::AgentSideConnection::new(agent, outgoing, incoming, |fut| {
                 tokio::task::spawn_local(fut);
             });
