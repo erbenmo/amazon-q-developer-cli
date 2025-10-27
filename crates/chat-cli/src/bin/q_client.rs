@@ -76,6 +76,10 @@ impl acp::Client for QCliTestClient {
         &self,
         args: acp::SessionNotification,
     ) -> acp::Result<(), acp::Error> {
+
+        eprintln!("Receiving!");
+
+
         match args.update {
             acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) => {
                 let text = match content {
