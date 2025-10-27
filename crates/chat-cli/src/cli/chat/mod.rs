@@ -600,7 +600,7 @@ pub struct ChatSession {
     /// Pending prompts to be sent
     pending_prompts: VecDeque<PromptMessage>,
     interactive: bool,
-    inner: Option<ChatState>,
+    pub inner: Option<ChatState>,
     ctrlc_rx: broadcast::Receiver<()>,
     wrap: Option<WrapMode>,
 }
