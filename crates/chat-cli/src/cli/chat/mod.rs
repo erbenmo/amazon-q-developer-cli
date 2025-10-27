@@ -2186,7 +2186,7 @@ impl ChatSession {
                         name: tool.name.clone(),
                         reason: formatted_set,
                     };
-                    self.stderr.send(Event::ToolCallRejection(event))?;
+                    self.stderr.send(Event::ToolCallRejection(event)).await?;
                 }
 
                 return Ok(ChatState::HandleInput {
@@ -2607,7 +2607,7 @@ impl ChatSession {
                                         role: MessageRole::Assistant,
                                     };
 
-                                    self.stdout.send(Event::TextMessageStart(msg_start))?;
+                                    self.stdout.send(Event::TextMessageStart(msg_start)).await?;
                                     response_prefix_printed = true;
                                 }
                             } else {
@@ -2826,7 +2826,7 @@ impl ChatSession {
                                 message_id: request_id.clone().unwrap_or_default(),
                                 delta: std::mem::take(&mut temp_buf),
                             };
-                            self.stdout.send(Event::TextMessageContent(text_msg_content))?;
+                            self.stdout.send(Event::TextMessageContent(text_msg_content)).await?;
 
                             state.newline = state.set_newline;
                             state.set_newline = false;
@@ -2874,7 +2874,7 @@ impl ChatSession {
                 if self.stderr.should_send_structured_event {
                     self.stderr.send(Event::TextMessageEnd(TextMessageEnd {
                         message_id: request_id.clone().unwrap_or_default(),
-                    }))?;
+                    })).await?;
                 } else {
                     queue!(self.stderr, StyledText::reset(), StyledText::reset_attributes())?;
                     execute!(self.stdout, style::Print("\n"))?;
@@ -3224,7 +3224,7 @@ impl ChatSession {
                 is_trusted: trusted,
                 parent_message_id: None,
             };
-            self.stdout.send(Event::ToolCallStart(tool_call_start))?;
+            self.stdout.send(Event::ToolCallStart(tool_call_start)).await?;
         } else {
             queue!(
                 self.stdout,

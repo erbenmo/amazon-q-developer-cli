@@ -1,6 +1,5 @@
 use std::io::Write as _;
 use std::marker::PhantomData;
-use std::sync::mpsc::Receiver;
 
 use crossterm::style::{
     self,
@@ -44,20 +43,20 @@ pub struct ViewEnd {
     // TODO: later on we will need replace this byte array with an actual event type from ACP
     pub sender: tokio::sync::mpsc::Sender<Vec<u8>>,
     /// To receive messages from control about state changes
-    pub receiver: std::sync::mpsc::Receiver<Event>,
+    pub receiver: tokio::sync::mpsc::Receiver<Event>,
 }
 
 impl ViewEnd {
     /// Method to facilitate in the interim
     /// It takes possible messages from the old even loop and queues write to the output provided
     /// This blocks the current thread and consumes the [ViewEnd]
-    pub fn into_legacy_mode(
-        self,
+    pub async fn into_legacy_mode(
+        mut self,
         theme_source: impl ThemeSource,
         mut stderr: std::io::Stderr,
         mut stdout: std::io::Stdout,
     ) -> Result<(), ConduitError> {
-        while let Ok(event) = self.receiver.recv() {
+        while let Some(event) = self.receiver.recv().await {
             match event {
                 Event::LegacyPassThrough(content) => match content {
                     LegacyPassThroughOutput::Stderr(content) => {
@@ -193,7 +192,7 @@ pub type InputReceiver = tokio::sync::mpsc::Receiver<Vec<u8>>;
 pub struct ControlEnd<T> {
     pub current_event: Option<Event>,
     /// Used by the control to send state changes to the view
-    pub sender: std::sync::mpsc::Sender<Event>,
+    pub sender: tokio::sync::mpsc::Sender<Event>,
     /// Flag indicating whether structured events should be sent through the conduit.
     /// When true, the control end will send structured event data in addition to
     /// raw pass-through content, enabling richer communication between layers.
@@ -225,8 +224,8 @@ impl<T> ControlEnd<T> {
     }
 
     /// Sends an event to the view layer through the conduit
-    pub fn send(&self, event: Event) -> Result<(), ConduitError> {
-        Ok(self.sender.send(event).map_err(Box::new)?)
+    pub async fn send(&self, event: Event) -> Result<(), ConduitError> {
+        self.sender.send(event).await.map_err(|_| ConduitError::NullState)
     }
 }
 
@@ -278,7 +277,7 @@ impl std::io::Write for ControlEnd<DestinationStderr> {
 
     fn flush(&mut self) -> std::io::Result<()> {
         if let Some(current_state) = self.current_event.take() {
-            self.sender.send(current_state).map_err(std::io::Error::other)
+            self.sender.try_send(current_state).map_err(std::io::Error::other)
         } else {
             Ok(())
         }
@@ -344,7 +343,7 @@ impl std::io::Write for ControlEnd<DestinationStdout> {
 
     fn flush(&mut self) -> std::io::Result<()> {
         if let Some(current_state) = self.current_event.take() {
-            self.sender.send(current_state).map_err(std::io::Error::other)
+            self.sender.try_send(current_state).map_err(std::io::Error::other)
         } else {
             Ok(())
         }
@@ -382,7 +381,7 @@ pub fn get_legacy_conduits(
     ControlEnd<DestinationStderr>,
     ControlEnd<DestinationStdout>,
 ) {
-    let (state_tx, state_rx) = std::sync::mpsc::channel::<Event>();
+    let (state_tx, state_rx) = tokio::sync::mpsc::channel::<Event>(100);
     let (byte_tx, byte_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
 
     (
@@ -409,10 +408,10 @@ pub fn get_legacy_conduits(
 pub fn initialize_conduit() -> (
     ControlEnd<DestinationStderr>,
     ControlEnd<DestinationStdout>,
-    Receiver<Event>,
+    tokio::sync::mpsc::Receiver<Event>,
 ) {
     let should_send_structured_event = true;
-    let (state_tx, state_rx) = std::sync::mpsc::channel::<Event>();
+    let (state_tx, state_rx) = tokio::sync::mpsc::channel::<Event>(100);
     (
         ControlEnd {
             current_event: None,

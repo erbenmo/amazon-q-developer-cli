@@ -194,7 +194,7 @@ impl Tool {
                 },
             };
 
-            output.send(Event::ToolCallArgs(tool_call_args))?;
+            output.send(Event::ToolCallArgs(tool_call_args)).await?;
         } else {
             match self {
                 Tool::FsRead(fs_read) => fs_read.queue_description(os, output).await,
