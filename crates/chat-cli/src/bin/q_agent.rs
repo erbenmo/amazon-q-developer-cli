@@ -147,6 +147,9 @@ impl acp::Agent for QCliAgent {
     async fn prompt(&self, arguments: acp::PromptRequest) -> Result<acp::PromptResponse, acp::Error> {
         // Extract text from prompt content
         let mut prompt_text = String::new();
+
+        eprintln!("Prompt - 1");
+
         for content in arguments.prompt {
             match content {
                 acp::ContentBlock::Text(text_content) => {
@@ -158,8 +161,12 @@ impl acp::Agent for QCliAgent {
             }
         }
 
+        eprintln!("Prompt - 2 {}", prompt_text);
+
         // send prompt_text to user_input channel. ChatSession will pick it up
         self.user_input_sender.send(prompt_text).await.unwrap();
+
+        eprintln!("Prompt - 3");
 
         // TODO: Agent should really only return this when it has completed everything in this turn. (i.e. return LLM response, call tool, etc)
         Ok(acp::PromptResponse {
@@ -194,8 +201,9 @@ impl acp::Agent for QCliAgent {
 
 #[tokio::main]
 async fn main() -> acp::Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt::init();
+    // Disable logging - somehow the tracing::error are getting printed to stdout and I haven't figured out why
+    // tracing_subscriber::fmt::init();
+    // tracing::error!("still here?"); // this gets added to stdout
 
     let outgoing = tokio::io::stdout().compat_write();
     let incoming = tokio::io::stdin().compat();
@@ -246,6 +254,8 @@ async fn main() -> acp::Result<()> {
             let (conn, handle_io) = acp::AgentSideConnection::new(agent, outgoing, incoming, |fut| {
                 tokio::task::spawn_local(fut);
             });
+
+            eprintln!("Q_Agent -6");
 
             // Start the Conduit -> ACP Client event processing
             session_update_sender.spawn_event_processor(chat_event_receiver, conn);

@@ -751,7 +751,7 @@ impl Agents {
                             let legacy_mcp_config = match McpServerConfig::load_from_file(os, global_mcp_path).await {
                                 Ok(config) => config,
                                 Err(e) => {
-                                    tracing::error!("Error loading global mcp json path: {e}. Skipping");
+                                    tracing::error!("WTF3 Error loading global mcp json path: {e}. Skipping");
                                     break 'load_legacy_mcp_json;
                                 },
                             };
@@ -910,7 +910,7 @@ async fn load_legacy_mcp_config(os: &Os) -> eyre::Result<Option<McpServerConfig>
     let global_mcp_config = match McpServerConfig::load_from_file(os, global_mcp_path).await {
         Ok(config) => Some(config),
         Err(e) => {
-            tracing::error!("Error loading global mcp json path: {e}.");
+            tracing::error!("WTF1 Error loading global mcp json path: {e}.");
             None
         },
     };
@@ -919,7 +919,7 @@ async fn load_legacy_mcp_config(os: &Os) -> eyre::Result<Option<McpServerConfig>
     let workspace_mcp_config = match McpServerConfig::load_from_file(os, workspace_mcp_path).await {
         Ok(config) => Some(config),
         Err(e) => {
-            tracing::error!("Error loading global mcp json path: {e}.");
+            tracing::error!("WTF2 Error loading global mcp json path: {e}.");
             None
         },
     };

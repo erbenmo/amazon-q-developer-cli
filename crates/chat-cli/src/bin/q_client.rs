@@ -138,6 +138,8 @@ async fn main() -> Result<()> {
                     tokio::task::spawn_local(fut);
                 });
 
+            println!("1. Going to initialize connection");
+
             // Handle I/O in the background
             tokio::task::spawn_local(handle_io);
 
@@ -153,6 +155,8 @@ async fn main() -> Result<()> {
                 meta: None,
             })
             .await?;
+
+            println!("2. Completed initialization of connection & session");
             
             let response = conn
                 .new_session(acp::NewSessionRequest {

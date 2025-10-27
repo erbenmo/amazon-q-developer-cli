@@ -25,7 +25,6 @@ use std::collections::{
 };
 use std::io::{
     IsTerminal,
-    Read,
     Write,
 };
 use std::process::ExitCode;
@@ -238,29 +237,34 @@ pub struct ChatArgs {
 impl ChatArgs {
     pub async fn create_chat_session(mut self, os: &mut Os, input_receiver: tokio::sync::mpsc::Receiver<String>,
         control_end_stderr: ControlEnd<DestinationStderr>, control_end_stdout: ControlEnd<DestinationStdout>) -> Result<ChatSession> {
-        let mut input: Option<String> = self.input;
+        let input: Option<String> = self.input;
 
-        if self.no_interactive && input.is_none() {
-            if !std::io::stdin().is_terminal() {
-                let mut buffer = String::new();
-                match std::io::stdin().read_to_string(&mut buffer) {
-                    Ok(_) => {
-                        if !buffer.trim().is_empty() {
-                            input = Some(buffer.trim().to_string());
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("Error reading from stdin: {}", e);
-                    },
-                }
-            }
+        eprintln!("Q_Agent -3.2");
 
-            if input.is_none() {
-                bail!("Input must be supplied when running in non-interactive mode");
-            }
-        }
+        // Need to comment out for ACP:
+        // if self.no_interactive && input.is_none() {
+        //     if !std::io::stdin().is_terminal() {
+        //         let mut buffer = String::new();
+        //         match std::io::stdin().read_to_string(&mut buffer) {
+        //             Ok(_) => {
+        //                 if !buffer.trim().is_empty() {
+        //                     input = Some(buffer.trim().to_string());
+        //                 }
+        //             },
+        //             Err(e) => {
+        //                 eprintln!("Error reading from stdin: {}", e);
+        //             },
+        //         }
+        //     }
+
+        //     if input.is_none() {
+        //         bail!("Input must be supplied when running in non-interactive mode");
+        //     }
+        // }
 
         let mut stderr = std::io::stderr();
+
+        eprintln!("Q_Agent -3.3");
 
         let args: Vec<String> = std::env::args().collect();
         if args
@@ -280,6 +284,8 @@ impl ChatArgs {
             )?;
         }
 
+        eprintln!("Q_Agent -3.31");
+
         let conversation_id = uuid::Uuid::new_v4().to_string();
         info!(?conversation_id, "Generated new conversation id");
 
@@ -291,12 +297,16 @@ impl ChatArgs {
                 true
             },
         };
+        eprintln!("Q_Agent -3.32");
 
         let agents = {
             let skip_migration = self.no_interactive;
+            eprintln!("Q_Agent -3.33");
             let (mut agents, md) =
                 Agents::load(os, self.agent.as_deref(), skip_migration, &mut stderr, mcp_enabled).await;
             agents.trust_all_tools = self.trust_all_tools;
+
+            eprintln!("Q_Agent -3.4");
 
             os.telemetry
                 .send_agent_config_init(&os.database, conversation_id.clone(), AgentConfigInitArgs {
@@ -327,6 +337,7 @@ impl ChatArgs {
                 os.database.settings.set(Setting::McpLoadedBefore, true).await?;
             }
 
+            eprintln!("Q_Agent -3.5");
             if let Some(trust_tools) = self.trust_tools.take() {
                 for tool in &trust_tools {
                     if !tool.starts_with("@") && !NATIVE_TOOLS.contains(&tool.as_str()) {
@@ -358,6 +369,8 @@ impl ChatArgs {
             agents
         };
 
+        eprintln!("Q_Agent -3.6");
+
         // If modelId is specified, verify it exists before starting the chat
         // Otherwise, CLI will use a default model when starting chat
         let (models, default_model_opt) = get_available_models(os).await?;
@@ -371,6 +384,8 @@ impl ChatArgs {
                 Some(default_model_opt.model_id.clone())
             }
         };
+
+        eprintln!("Q_Agent -3.7");
 
         let model_id: Option<String> = if let Some(requested) = self.model.as_ref() {
             // CLI argument takes highest priority
@@ -406,6 +421,9 @@ impl ChatArgs {
             fallback_model_id()
         };
 
+        eprintln!("Q_Agent -3.8");
+
+
         let (prompt_request_sender, prompt_request_receiver) = tokio::sync::broadcast::channel::<PromptQuery>(5);
         let (prompt_response_sender, prompt_response_receiver) =
             tokio::sync::broadcast::channel::<PromptQueryResult>(5);
@@ -420,6 +438,8 @@ impl ChatArgs {
             .build(os, Box::new(std::io::stderr()), !self.no_interactive)
             .await?;
         let tool_config = tool_manager.load_tools(os, &mut stderr).await?;
+
+        eprintln!("Q_Agent -3.9");
 
         return ChatSession::new(
             os,

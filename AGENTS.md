@@ -26,4 +26,4 @@ Completed
 6. Add SessionUpdateSender responsible for reading structured events from Conduit and send them to ACP connection as SessionUpdate
 7. Move conduit ownership out of ChatSession to caller (like q_agent)
 8. Initialize ChatSession, Conduit in ACP Agent
-9. 
+9. Integrated everthing with ACP Agent.
